@@ -238,6 +238,46 @@
     return TAGESTEILE.find((seg) => istInSegment(stunde, seg));
   }
 
+  // Baut die Tagesabschnitte als konkrete Datums-Zeiträume für "heute"
+  // (Nacht taucht zweimal auf: 00-07 Uhr und 20-24 Uhr - so bleibt die
+  // Berechnung ohne Mitternachts-Sonderfälle einfach).
+  function tagesplanBasis(jetzt) {
+    const heute = (stunde) => new Date(jetzt.getFullYear(), jetzt.getMonth(), jetzt.getDate(), stunde, 0, 0);
+    return [
+      { start: heute(0), ende: heute(7), label: "Nacht" },
+      { start: heute(7), ende: heute(12), label: "Vormittag" },
+      { start: heute(12), ende: heute(13), label: "Mittag" },
+      { start: heute(13), ende: heute(18), label: "Nachmittag" },
+      { start: heute(18), ende: heute(20), label: "Abend" },
+      { start: heute(20), ende: heute(24), label: "Nacht" },
+    ];
+  }
+
+  // Schneidet die Termine aus den Tagesabschnitten heraus und liefert eine
+  // chronologische Liste aus freien Abschnitts-Resten ("frei") und echten
+  // Terminen ("termin") - so bleibt die unverplante Zeit sichtbar.
+  function baueTagesplan(jetzt, termine) {
+    const heutigeTermine = termine
+      .filter((t) => t.start.toDateString() === jetzt.toDateString())
+      .sort((a, b) => a.start - b.start);
+
+    let basis = tagesplanBasis(jetzt);
+    heutigeTermine.forEach((t) => {
+      const naechsteBasis = [];
+      basis.forEach((seg) => {
+        const ueberlappt = t.start < seg.ende && t.ende > seg.start;
+        if (!ueberlappt) { naechsteBasis.push(seg); return; }
+        if (t.start > seg.start) naechsteBasis.push({ ...seg, ende: t.start });
+        if (t.ende < seg.ende) naechsteBasis.push({ ...seg, start: t.ende });
+      });
+      basis = naechsteBasis;
+    });
+
+    const frei = basis.filter((seg) => seg.ende > seg.start).map((seg) => ({ ...seg, typ: "frei" }));
+    const belegt = heutigeTermine.map((t) => ({ ...t, typ: "termin" }));
+    return [...frei, ...belegt].sort((a, b) => a.start - b.start);
+  }
+
   const state = { termine: [], lastSyncOk: null, lastSyncFehler: null };
 
   function istKonfiguriert() {
@@ -365,18 +405,37 @@
       return;
     }
 
-    state.termine.forEach((t) => {
-      const istJetzt = jetzt >= t.start && jetzt <= t.ende;
-      const farbe = t.colorId ? "gc-" + t.colorId : "gc-default";
+    // Es gibt Termine: freie Zeit zwischen/vor/nach den Terminen wird als
+    // Tagesabschnitt-Block gefüllt, damit der ganze Tag sichtbar bleibt -
+    // nicht nur die Termine selbst.
+    baueTagesplan(jetzt, state.termine).forEach((seg) => {
+      const istJetzt = jetzt >= seg.start && jetzt <= seg.ende;
+      const dauerMin = Math.max(1, Math.round((seg.ende - seg.start) / 60000));
+      // Dauer bestimmt die Höhe (länger = mehr Platz), aber gedeckelt
+      // zwischen 1 und 4 Stunden, damit kurze Termine trotzdem lesbar
+      // groß bleiben und eine sehr lange freie Nacht nicht alles verdrängt.
+      const gewicht = Math.min(Math.max(dauerMin, 60), 240);
       const el = document.createElement("div");
-      el.className = "termin" + (istJetzt ? " jetzt" : "");
-      el.style.background = "var(--" + farbe + "-bg)";
-      el.style.color = "var(--" + farbe + "-ink)";
-      el.innerHTML =
-        '<div class="termin-zeit">' + UHR_ICON +
-        "<span>" + formatUhr(t.start) + "–" + formatUhr(t.ende) + "</span>" +
-        '<span class="jetzt-chip">Jetzt</span></div>' +
-        '<div class="termin-titel">' + escapeHtml(t.titel) + "</div>";
+
+      if (seg.typ === "termin") {
+        const farbe = seg.colorId ? "gc-" + seg.colorId : "gc-default";
+        el.className = "termin" + (istJetzt ? " jetzt" : "");
+        el.style.background = "var(--" + farbe + "-bg)";
+        el.style.color = "var(--" + farbe + "-ink)";
+        el.innerHTML =
+          '<div class="termin-zeit">' + UHR_ICON +
+          "<span>" + formatUhr(seg.start) + "–" + formatUhr(seg.ende) + "</span>" +
+          '<span class="jetzt-chip">Jetzt</span></div>' +
+          '<div class="termin-titel">' + escapeHtml(seg.titel) + "</div>";
+      } else {
+        el.className = "tagesteil-block" + (istJetzt ? " jetzt" : "");
+        el.innerHTML =
+          '<div class="termin-zeit">' + UHR_ICON +
+          "<span>" + formatUhr(seg.start) + "–" + formatUhr(seg.ende) + "</span>" +
+          '<span class="jetzt-chip">Jetzt</span></div>' +
+          '<div class="termin-titel">' + seg.label + "</div>";
+      }
+      el.style.flexGrow = String(gewicht);
       liste.appendChild(el);
     });
   }
