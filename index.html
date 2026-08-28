@@ -10,6 +10,7 @@
     --sync-ok: #3c6b58;
     --sync-fail: #a13f2b;
     --rahmen: rgba(43, 38, 33, 0.3);
+    --skal: 1; /* wird per JS verkleinert, falls sonst nicht alles auf den Bildschirm passt */
 
     --gc-default-bg: #8a7a63; --gc-default-ink: #f7f1e6;
     --gc-1-bg: #6f6a96;  --gc-1-ink: #f2f1fa;  /* Lavendel */
@@ -119,15 +120,15 @@
   .liste { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 
   .termin {
-    flex: 1 1 0; display: flex; flex-direction: column; justify-content: center;
-    gap: 0.35em; padding: 1.6vh 4vw; position: relative;
-    border: 2px solid var(--rahmen);
+    flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; justify-content: center;
+    gap: 0.35em; padding: calc(1.6vh * var(--skal)) 4vw; position: relative;
+    border: 2px solid var(--rahmen); overflow: hidden;
   }
   .jetzt { border-width: 6px; border-color: var(--now-ring); }
 
   .termin-zeit {
     display: flex; align-items: center; gap: 0.5em;
-    font-size: clamp(16px, 2.6vmin, 28px); font-weight: 600; opacity: 0.92;
+    font-size: calc(clamp(16px, 2.6vmin, 28px) * var(--skal)); font-weight: 600; opacity: 0.92;
     font-variant-numeric: tabular-nums;
   }
   .termin-zeit svg { width: 1em; height: 1em; flex: 0 0 auto; }
@@ -138,14 +139,17 @@
   }
   .jetzt .jetzt-chip { display: inline-block; }
 
-  .termin-titel { font-size: clamp(22px, 4.4vmin, 48px); font-weight: 800; line-height: 1.08; text-wrap: balance; }
+  .termin-titel {
+    font-size: calc(clamp(22px, 4.4vmin, 48px) * var(--skal));
+    font-weight: 800; line-height: 1.08; text-wrap: balance;
+  }
 
   .tagesteil-block {
     flex: 0 0 auto; display: flex; align-items: center; gap: 0.6em;
-    padding: 0.9vh 4vw; position: relative;
+    padding: calc(0.9vh * var(--skal)) 4vw; position: relative; overflow: hidden;
     background: var(--paper); color: var(--ink-soft);
     border: 2px solid var(--rahmen);
-    font-size: clamp(14px, 2vmin, 20px); font-weight: 600;
+    font-size: calc(clamp(14px, 2vmin, 20px) * var(--skal)); font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
   .tagesteil-block svg { width: 1em; height: 1em; flex: 0 0 auto; }
@@ -405,6 +409,12 @@
       el.className = "termin" + (istJetzt ? " jetzt" : "");
       el.style.background = "var(--" + farbe + "-bg)";
       el.style.color = "var(--" + farbe + "-ink)";
+      // Höhe richtet sich nach der tatsächlichen Dauer (länger = mehr
+      // Platz), aber gedeckelt zwischen 20 Min. und 3 Std., damit ein
+      // kurzer Termin trotzdem groß genug bleibt und ein sehr langer
+      // nicht alles andere verdrängt.
+      const dauerMin = Math.max(1, Math.round((t.ende - t.start) / 60000));
+      el.style.flexGrow = String(Math.min(Math.max(dauerMin, 20), 180));
       el.innerHTML =
         '<div class="termin-zeit">' + UHR_ICON +
         "<span>" + formatUhr(t.start) + "–" + formatUhr(t.ende) + "</span>" +
@@ -418,6 +428,7 @@
       TAGESTEILE.forEach((seg) => {
         liste.appendChild(tagesteilZeile(seg, istInSegment(aktuelleStunde, seg)));
       });
+      passeGroesseAn();
       return;
     }
 
@@ -430,6 +441,22 @@
         seg.typ === "termin" ? terminKachel(seg, istJetzt) : tagesteilZeile(seg, istJetzt)
       );
     });
+    passeGroesseAn();
+  }
+
+  // Sicherheitsnetz: verkleinert Schrift/Abstände in kleinen Schritten,
+  // bis der komplette Tagesplan ohne Abschneiden auf den Bildschirm passt
+  // (behebt das frühere Problem, dass z.B. nur bis 16:00 Uhr sichtbar war).
+  function passeGroesseAn() {
+    const liste = document.getElementById("liste");
+    let skal = 1;
+    document.documentElement.style.setProperty("--skal", "1");
+    let versuche = 0;
+    while (liste.scrollHeight > liste.clientHeight + 1 && skal > 0.55 && versuche < 24) {
+      skal -= 0.03;
+      document.documentElement.style.setProperty("--skal", skal.toFixed(2));
+      versuche++;
+    }
   }
 
   renderKopf();
@@ -437,4 +464,5 @@
   setInterval(renderKopf, 30000);
   setInterval(renderListe, 30000);
   setInterval(ladeTermine, CONFIG.pollIntervalMs);
+  window.addEventListener("resize", renderListe);
 </script>
